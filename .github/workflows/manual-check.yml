@@ -1,8 +1,10 @@
 name: Possession Lab backend check
 
-# This workflow is intentionally manual-only until the private Site secret,
-# free GitHub Actions budget and real-world run time are verified.
+# An hourly wake-up checks official finals and refreshes matchups that are due.
+# The Site itself enforces tip-off locks and decides when simulations are needed.
 on:
+  schedule:
+    - cron: '47 * * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -30,9 +32,10 @@ jobs:
       SITE_BYPASS_TOKEN: ${{ secrets.SITE_BYPASS_TOKEN }}
       DRY_RUN: ${{ inputs.mode == 'dry-run' && '1' || '0' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
+          package-manager-cache: false
       - name: Verify forecast backend
         run: node scheduler.mjs
