@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 const RETRY_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const BATCH_COUNT = 10;
 const sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms));
 
 function endpoint(origin) {
@@ -61,11 +62,11 @@ function gameId(item) {
 
 async function runGame(client, game, log) {
   const id = gameId(game);
-  for (let batch = 0; batch < 4; batch++) {
+  for (let batch = 0; batch < BATCH_COUNT; batch++) {
     const result = await client('archive_forecast_batch', { game_id: id, batch });
     if (result?.gameId && String(result.gameId) !== id)
       throw new Error(`Batch ${batch} returned a different game ID`);
-    log(`game=${id} batch=${batch + 1}/4 saved`);
+    log(`game=${id} batch=${batch + 1}/${BATCH_COUNT} saved`);
   }
   const result = await client('finalize_forecast_batches', { game_id: id });
   if (result?.gameId && String(result.gameId) !== id)
@@ -131,7 +132,7 @@ export async function runCycle({
   });
   log(`day=${before.day} saved=${before.savedGames ?? 'unknown'} due=${due.length}`);
 
-  // Different games may run concurrently; a game's four batches must be
+  // Different games may run concurrently; a game's ten batches must be
   // sequential so its first batch freezes the inputs used by the rest.
   const results = await pool(due, 2, item => runGame(client, item, log));
   const failures = [];
