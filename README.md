@@ -12,7 +12,7 @@ Each full run:
 1. Fetches official final scores and box scores, updating slow-moving team and player strengths.
 2. Reads the Site's due-game queue. This considers forecasts already archived, planned refreshes, injury-sensitive late passes, and tip-off times in Eastern Time.
 3. Runs four persisted 500-game batches for each due matchup (2,000 simulated games total), two different games concurrently, then finalizes the pre-tip forecast in D1.
-4. Rechecks the due queue and operational health, exits nonzero if a due game remains, and leaves the failure visible in Render logs.
+4. Rechecks the due queue and operational health, exits nonzero if a due game remains, and leaves the failure visible in GitHub Actions logs.
 
 Snapshots are written by the Site only before tip-off. There is **no** after-tip catch-up or retrospective grading exception in this scheduler. A late final stays attached to its original Eastern tip-off date.
 
