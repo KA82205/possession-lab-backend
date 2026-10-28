@@ -6,8 +6,8 @@ historical record. The Site's D1 database stays authoritative.
 
 ## Schedule
 
-GitHub Actions checks the backend at minute `47` of every UTC hour, which
-also means minute `47` in Eastern Time. A scheduled check can be delayed
+GitHub Actions checks the backend at minute `18` of every UTC hour, which
+also means minute `18` in Eastern Time. A scheduled check can be delayed
 by GitHub, and the Site (not the workflow) decides which games are due.
 Each full run:
 
