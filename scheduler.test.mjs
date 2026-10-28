@@ -54,6 +54,20 @@ test('rejects insecure Site endpoints', () => {
   assert.throws(() => makeClient({ siteOrigin: 'http://example.com', token: 'secret' }), /HTTPS/);
 });
 
+test('dry run checks status without starting a simulation or learning update', async () => {
+  const actions = [];
+  const fetchImpl = async (_url, init) => {
+    const { action } = JSON.parse(init.body);
+    actions.push(action);
+    if (action === 'due_games') return json({ day: '2026-10-28', scheduled: 12, savedGames: 11, due: [{ game_id: '401800011' }] });
+    if (action === 'health') return json({ status: 'healthy' });
+    throw new Error('unwanted write');
+  };
+  assert.deepEqual(await runCycle({ siteOrigin: 'https://example.com', token: 'secret', dryRun: true, fetchImpl, log() {} }),
+    { dryRun: true, due: 1, day: '2026-10-28' });
+  assert.deepEqual(actions, ['due_games', 'health']);
+});
+
 test('a missing archived game fails the scheduled run', async () => {
   const fetchImpl = async (_url, init) => {
     const { action, game_id } = JSON.parse(init.body);
