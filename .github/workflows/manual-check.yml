@@ -4,7 +4,7 @@ name: Possession Lab backend check
 # The Site itself enforces tip-off locks and decides when simulations are needed.
 on:
   schedule:
-    - cron: '47 * * * *'
+    - cron: '18 * * * *'
   workflow_dispatch:
     inputs:
       mode:
