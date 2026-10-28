@@ -6,7 +6,7 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), {
   status, headers: { 'content-type': 'application/json' },
 });
 
-test('saves 2,000 batches per game and verifies no due games remain', async () => {
+test('saves ten 200-game batches per game and verifies no due games remain', async () => {
   const calls = [];
   let dueReads = 0;
   const gameIds = ['401800011', '401800012'];
@@ -24,11 +24,11 @@ test('saves 2,000 batches per game and verifies no due games remain', async () =
   };
   const result = await runCycle({ siteOrigin: 'https://example.com', token: 'placeholder', fetchImpl, log() {} });
   assert.deepEqual(result, { day: '2026-10-28', archived: 2, failed: 0, outstanding: 0 });
-  assert.equal(calls.filter(call => call.action === 'archive_forecast_batch').length, 8);
+  assert.equal(calls.filter(call => call.action === 'archive_forecast_batch').length, 20);
   assert.equal(calls.filter(call => call.action === 'finalize_forecast_batches').length, 2);
   for (const id of gameIds) {
     const sequence = calls.filter(call => call.game_id === id).map(call => `${call.action}:${call.batch ?? ''}`);
-    assert.deepEqual(sequence, [0, 1, 2, 3].map(i => `archive_forecast_batch:${i}`).concat('finalize_forecast_batches:'));
+    assert.deepEqual(sequence, Array.from({length:10},(_,i) => `archive_forecast_batch:${i}`).concat('finalize_forecast_batches:'));
   }
 });
 
