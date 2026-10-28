@@ -1,12 +1,14 @@
 # Possession Lab automated forecasting
 
-This private GitHub Actions workflow invokes the **existing** Possession Lab website's
+This GitHub Actions workflow invokes the **existing** Possession Lab website's
 forecasting backend. It does not replicate the simulation engine or move the
 historical record. The Site's D1 database stays authoritative.
 
 ## Schedule
 
-GitHub Actions is planned to run `node scheduler.mjs` on a recurring UTC schedule.
+GitHub Actions checks the backend at minute `47` of every UTC hour, which
+also means minute `47` in Eastern Time. A scheduled check can be delayed
+by GitHub, and the Site (not the workflow) decides which games are due.
 Each full run:
 
 1. Fetches official final scores and box scores, updating slow-moving team and player strengths.
@@ -18,10 +20,8 @@ Snapshots are written by the Site only before tip-off. There is **no** after-tip
 
 ## GitHub Actions configuration
 
-The workflow is initially **manual-only** so it cannot consume minutes or
-touch forecasts before its secret and $0 spending budget have been verified.
-Manual runs default to read-only (`DRY_RUN=1`). Enable the schedule only after
-those checks pass.
+Manual runs default to read-only (`DRY_RUN=1`). An explicit `full` manual run
+or the hourly schedule calls the Site updater.
 
 1. In repository Settings → Secrets and variables → Actions, store the current
    Site service-access bearer token as a **repository secret** named
@@ -31,10 +31,12 @@ those checks pass.
    included-minutes allowance, not unlimited time.
 3. Trigger the read-only workflow manually. It must read the due game queue
    and backend health without returning HTTP 401 or 403.
-4. Then enable the recurring schedule. At the planned 30-minute cadence,
-   monitor monthly minutes and adjust if actual 2,000-game simulations would
-   exceed the included allowance. GitHub does not guarantee exact schedule
-   start times, so the Site's existing pre-tip check remains authoritative.
+4. Check GitHub's monthly minutes periodically. A private repository can exhaust
+   its free minutes when several dozen 2,000-game forecasts run each day. At a
+   $0 stop-usage budget this stops rather than charging. Standard GitHub Actions
+   runners in public repositories have no included-minute quota, but changing a
+   repository from private to public requires the owner's explicit consent.
+   GitHub does not guarantee exact schedule start times.
 
 The bypass token is a privileged credential. Never add it to Git, logs, tickets,
 README files, or screenshots. Rotate the Site token and update GitHub Actions if it is
