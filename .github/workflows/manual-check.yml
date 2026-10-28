@@ -1,0 +1,38 @@
+name: Possession Lab backend check
+
+# This workflow is intentionally manual-only until the private Site secret,
+# free GitHub Actions budget and real-world run time are verified.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Forecast update or read-only connection check
+        required: true
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - full
+
+permissions:
+  contents: read
+
+concurrency:
+  group: possession-lab-scheduler
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      SITE_ORIGIN: https://possession-lab-nba-2026.ka82205.chatgpt.site
+      SITE_BYPASS_TOKEN: ${{ secrets.SITE_BYPASS_TOKEN }}
+      DRY_RUN: ${{ inputs.mode == 'dry-run' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify forecast backend
+        run: node scheduler.mjs
