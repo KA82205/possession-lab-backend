@@ -92,6 +92,7 @@ async function pool(items, concurrency, work) {
 export async function runCycle({
   siteOrigin = process.env.SITE_ORIGIN,
   token = process.env.SITE_BYPASS_TOKEN,
+  dryRun = process.env.DRY_RUN === '1',
   fetchImpl = fetch,
   wait = sleep,
   log = message => console.log(`[possession-lab] ${message}`),
@@ -100,6 +101,14 @@ export async function runCycle({
   const client = makeClient({ siteOrigin, token, fetchImpl, wait, timeoutMs });
   const started = new Date();
   log(`started=${started.toISOString()}`);
+
+  if (dryRun) {
+    const queue = await client('due_games');
+    const health = await client('health');
+    if (!Array.isArray(queue?.due)) throw new Error('Invalid due_games response');
+    log(`DRY_RUN day=${queue.day} scheduled=${queue.scheduled} saved=${queue.savedGames} due=${queue.due.length} health=${health?.status}`);
+    return { dryRun: true, due: queue.due.length, day: queue.day };
+  }
 
   // The Site remains the source of truth for D1, injury assumptions, grades,
   // updated team/player strengths, and immutable before-tip snapshots.
