@@ -62,6 +62,8 @@ function gameId(item) {
 
 async function runGame(client, game, log) {
   const id = gameId(game);
+  if (game.date && Date.parse(game.date) - Date.now() < 240_000)
+    throw new Error(`Game ${id} is too close to tip-off; keeping its existing archive`);
   for (let batch = 0; batch < BATCH_COUNT; batch++) {
     const result = await client('archive_forecast_batch', { game_id: id, batch });
     if (result?.gameId && String(result.gameId) !== id)
@@ -98,6 +100,7 @@ export async function runCycle({
   wait = sleep,
   log = message => console.log(`[possession-lab] ${message}`),
   timeoutMs = 180_000,
+  refreshResults = true,
 } = {}) {
   const client = makeClient({ siteOrigin, token, fetchImpl, wait, timeoutMs });
   const started = new Date();
@@ -114,8 +117,8 @@ export async function runCycle({
   // The Site remains the source of truth for D1, injury assumptions, grades,
   // updated team/player strengths, and immutable before-tip snapshots.
   try {
-    const updated = await client('refresh_results');
-    log(`results refreshed new=${updated?.newGames?.length ?? 0} modelThrough=${updated?.modelThrough ?? 'unknown'}`);
+    const updated = refreshResults ? await client('refresh_results') : null;
+    if (updated) log(`results refreshed new=${updated?.newGames?.length ?? 0} modelThrough=${updated?.modelThrough ?? 'unknown'}`);
   } catch (error) {
     // Temporary ESPN failure must not suppress forecasts using existing data.
     log(`results refresh warning=${String(error)}`);
@@ -134,7 +137,10 @@ export async function runCycle({
 
   // Different games may run concurrently; a game's ten batches must be
   // sequential so its first batch freezes the inputs used by the rest.
-  const results = await pool(due, 2, item => runGame(client, item, log));
+  // Each batch uses its own Worker request. Give simultaneous final deadlines
+  // enough independent slots to finish before the site's strict tip-off cutoff.
+  const concurrency = due.some(game => game.minutesToTip <= 15) ? 6 : 2;
+  const results = await pool(due, concurrency, item => runGame(client, item, log));
   const failures = [];
   for (let i = 0; i < results.length; i++) {
     if (!results[i].ok) {
@@ -158,9 +164,42 @@ export async function runCycle({
   return { archived: results.length, failed: 0, outstanding: 0, day: after.day };
 }
 
+// Keep an active clock between GitHub launches. Cron is a recovery trigger,
+// not the clock for each forecast. Hand off before the six-hour runner limit.
+export async function runService({
+  durationMs = Number(process.env.RUN_FOR_MINUTES || 300) * 60_000,
+  intervalMs = 60_000,
+  now = Date.now,
+  wait = sleep,
+  cycle = runCycle,
+  log = message => console.log(`[possession-lab] ${message}`),
+} = {}) {
+  if (!Number.isFinite(durationMs) || durationMs < 60_000 || durationMs > 330 * 60_000)
+    throw new Error('Worker duration must be between 1 and 330 minutes');
+  const started = now(), end = started + durationMs;
+  let lastRefresh = -Infinity, cycles = 0, failures = 0;
+  while (now() < end) {
+    const refreshResults = now() - lastRefresh >= 60 * 60_000;
+    try {
+      await cycle({ refreshResults });
+      if (refreshResults) lastRefresh = now();
+    } catch (error) {
+      failures++;
+      log(`cycle failed; retrying on the next check: ${String(error)}`);
+    }
+    cycles++;
+    const remaining = end - now();
+    if (remaining > 0) await wait(Math.min(intervalMs, remaining));
+  }
+  log(`handoff ready cycles=${cycles} failedCycles=${failures}`);
+  return { cycles, failures };
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runCycle().catch(error => {
+  const operation = process.env.WATCH === '1' ? runService : runCycle;
+  operation().catch(error => {
     console.error(`[possession-lab] scheduler failed: ${String(error)}`);
     process.exitCode = 1;
   });
 }
+

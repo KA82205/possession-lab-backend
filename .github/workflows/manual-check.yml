@@ -1,41 +1,56 @@
 name: Possession Lab backend check
 
-# An hourly wake-up checks official finals and refreshes matchups that are due.
-# The Site itself enforces tip-off locks and decides when simulations are needed.
+# Cron is only the recovery trigger. A running worker checks every minute and
+# explicitly dispatches its successor, so forecasts do not wait for cron delivery.
 on:
   schedule:
     - cron: '18 * * * *'
+  push:
+    branches: [main]
+    paths: ['scheduler.mjs', 'handoff.mjs', '*.test.mjs', '.github/workflows/manual-check.yml']
   workflow_dispatch:
     inputs:
       mode:
-        description: Forecast update or read-only connection check
+        description: Read-only check, one update, or continuous forecast worker
         required: true
         type: choice
         default: dry-run
-        options:
-          - dry-run
-          - full
+        options: [dry-run, full, watch]
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
-  group: possession-lab-scheduler
+  group: possession-lab-${{ inputs.mode == 'dry-run' && 'read-only' || 'scheduler' }}
   cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 355
     env:
       SITE_ORIGIN: https://possession-lab-nba-2026.ka82205.chatgpt.site
       SITE_BYPASS_TOKEN: ${{ secrets.SITE_BYPASS_TOKEN }}
       DRY_RUN: ${{ inputs.mode == 'dry-run' && '1' || '0' }}
+      WATCH: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'watch') && '1' || '0' }}
+      # A source update first proves a short cycle and handoff. Successors run 5h.
+      RUN_FOR_MINUTES: ${{ github.event_name == 'push' && '2' || '300' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Verify forecast backend
+      - name: Test scheduler
+        run: node --test
+      - name: Maintain pre-tip forecasts
+        id: worker
         run: node scheduler.mjs
+      - name: Start successor worker
+        if: ${{ !cancelled() && env.WATCH == '1' && steps.worker.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node handoff.mjs

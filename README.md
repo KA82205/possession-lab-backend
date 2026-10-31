@@ -1,55 +1,47 @@
 # Possession Lab automated forecasting
 
-This GitHub Actions workflow invokes the **existing** Possession Lab website's
-forecasting backend. It does not replicate the simulation engine or move the
-historical record. The Site's D1 database stays authoritative.
+This repository runs the existing Site's forecast backend. The Site retains its
+2,000-game simulation engine, immutable D1 archives, roster/injury inputs, grades,
+and model updates. No historical prediction is recreated after tip-off.
 
-## Schedule
+## Timing
 
-GitHub Actions checks the backend at minute `18` of every UTC hour, which
-also means minute `18` in Eastern Time. A scheduled check can be delayed
-by GitHub, and the Site (not the workflow) decides which games are due.
-Each full run:
+The production worker checks the due queue every minute between forecast cycles.
+It remains active for five hours, then explicitly dispatches its successor before
+GitHub's six-hour job limit. Hourly cron at minute 18 is a recovery trigger, not
+the clock for individual forecasts. Source pushes first run a two-minute bootstrap
+and handoff. A shared concurrency group allows only one production worker.
 
-1. Fetches official final scores and box scores, updating slow-moving team and player strengths.
-2. Reads the Site's due-game queue. This considers forecasts already archived, planned refreshes, injury-sensitive late passes, and tip-off times in Eastern Time.
-3. Runs ten persisted 200-game batches for each due matchup (2,000 simulated games total), two different games concurrently, then finalizes the pre-tip forecast in D1. Smaller batches avoid the site's 30-second Worker CPU ceiling.
-4. Rechecks the due queue and operational health, exits nonzero if a due game remains, and leaves the failure visible in GitHub Actions logs.
+The Site makes regular forecasts due after 60 minutes, checks injuries in the last
+hour, and starts an independent final pass 12 minutes before each scheduled tip.
+Each game runs ten sequential 200-game batches. Normally two games run concurrently;
+up to six run near tip so simultaneous games can finish before the cutoff. The Site
+refuses late writes. The input-check timestamp is distinct from archive completion.
+Interrupted inputs expire after 20 minutes, and an unavailable or stale injury feed
+causes a retry while keeping the last saved forecast.
 
-Snapshots are written by the Site only before tip-off. There is **no** after-tip catch-up or retrospective grading exception in this scheduler. A late final stays attached to its original Eastern tip-off date.
+Results and roster maintenance run hourly. Cycle failures are logged and retried on
+the next check; a failure does not terminate all later checks. Health reports also
+include missed final refreshes for games already live, so an empty due queue does
+not imply every forecast was timely.
 
-## GitHub Actions configuration
+GitHub and ESPN outages can still delay work. Exact start times are not guaranteed.
+A successful dispatch means the next run was requested; verify that it actually
+started and that forecasts were saved. The production repo is already public and
+uses standard Ubuntu runners. No paid hosting service or larger runner is added.
 
-Manual runs default to read-only (`DRY_RUN=1`). An explicit `full` manual run
-or the hourly schedule calls the Site updater.
+## Operation
 
-1. In repository Settings → Secrets and variables → Actions, store the current
-   Site service-access bearer token as a **repository secret** named
-   `SITE_BYPASS_TOKEN`. Do not add it as a variable or checked-in file.
-2. Set the GitHub Actions budget to $0 and configure it to **stop usage** when
-   the budget is reached. Private GitHub Free repositories have a monthly
-   included-minutes allowance, not unlimited time.
-3. Trigger the read-only workflow manually. It must read the due game queue
-   and backend health without returning HTTP 401 or 403.
-4. Check GitHub's monthly minutes periodically. A private repository can exhaust
-   its free minutes when several dozen 2,000-game forecasts run each day. At a
-   $0 stop-usage budget this stops rather than charging. Standard GitHub Actions
-   runners in public repositories have no included-minute quota, but changing a
-   repository from private to public requires the owner's explicit consent.
-   GitHub does not guarantee exact schedule start times.
+- `dry-run` manually reads status without simulations or model changes.
+- `full` manually performs one complete update.
+- `watch` manually starts a continuous worker and successor chain.
+- Cancelling a running worker does not request a successor. Disable the workflow
+  to stop its cron trigger and future dispatches as well.
+- Tests run before every worker. Use `node --test` locally.
+- `.github/workflows/keepalive.yml`, if present, retains its existing repository
+  activity maintenance. Do not reactivate the old ChatGPT automation.
 
-The bypass token is a privileged credential. Never add it to Git, logs, tickets,
-README files, or screenshots. Rotate the Site token and update GitHub Actions if it is
-ever disclosed. Keep the website private. Site authentication must continue
-accepting the `OAI-Sites-Authorization` header on `/api/tasks`.
-
-## Safe cutover
-
-1. Trigger the GitHub Actions workflow manually and verify its logs.
-2. Confirm a saved forecast and model health through the Site's Record page and D1 storage.
-3. Only then disable the old ChatGPT hourly automation, to prevent duplicate runs and unnecessary compute.
-4. Watch the first two scheduled GitHub runs, including a game near tip-off.
-
-Historical forecasts, live scores, model code and website pages require no migration.
-Run `npm test` for scheduler unit tests. A Git push will automatically redeploy
-future workflow code to GitHub Actions once the schedule is enabled.
+The encrypted repository secret `SITE_BYPASS_TOKEN` supplies Site service access.
+It is never copied into source, logs, prompts, or successor inputs. Handoff uses
+the short-lived repository-scoped `GITHUB_TOKEN` with `actions: write`, not a new
+personal access token. The read-only source checkout does not persist credentials.

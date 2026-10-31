@@ -79,3 +79,28 @@ test('a missing archived game fails the scheduled run', async () => {
   };
   await assert.rejects(runCycle({ siteOrigin: 'https://example.com', token: 'secret', fetchImpl, log() {} }), /Unfinished due forecasts/);
 });
+
+
+// Simulated time proves that forecast checks do not depend on another cron event.
+test('active worker checks each minute, refreshes results hourly, and survives failures', async () => {
+  const { runService } = await import('./scheduler.mjs');
+  let clock = 0;
+  const calls = [];
+  const result = await runService({ durationMs: 125 * 60_000, now: () => clock,
+    wait: async ms => { clock += ms; }, log() {},
+    cycle: async options => { calls.push(options); if(calls.length === 4) throw new Error('temporary outage'); },
+  });
+  assert.equal(calls.length, 125);
+  assert.equal(calls.filter(call => call.refreshResults).length, 3);
+  assert.deepEqual(result, { cycles: 125, failures: 1 });
+});
+
+test('worker counts simulation runtime toward its bounded handoff deadline', async () => {
+  const { runService } = await import('./scheduler.mjs');
+  let clock = 0;
+  const result = await runService({ durationMs: 5 * 60_000, now: () => clock,
+    wait: async ms => { clock += ms; }, log() {}, cycle: async () => { clock += 3 * 60_000; },
+  });
+  assert.equal(result.cycles, 2);
+  await assert.rejects(runService({durationMs: 360 * 60_000}), /duration/);
+});
