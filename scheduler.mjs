@@ -127,19 +127,22 @@ export async function runCycle({
   const before = await client('due_games');
   if (!Array.isArray(before?.due)) throw new Error('Invalid due_games response');
   const ids = new Set();
-  const due = before.due.filter(item => {
+  const allDue = before.due.filter(item => {
     const id = gameId(item);
     if (ids.has(id)) return false;
     ids.add(id);
     return true;
   });
-  log(`day=${before.day} saved=${before.savedGames ?? 'unknown'} due=${due.length}`);
+  log(`day=${before.day} saved=${before.savedGames ?? 'unknown'} due=${allDue.length}`);
 
   // Different games may run concurrently; a game's ten batches must be
   // sequential so its first batch freezes the inputs used by the rest.
   // Each batch uses its own Worker request. Give simultaneous final deadlines
   // enough independent slots to finish before the site's strict tip-off cutoff.
-  const concurrency = due.some(game => game.minutesToTip <= 15) ? 6 : 2;
+  const concurrency = allDue.some(game => game.minutesToTip <= 15) ? 6 : 2;
+  // Finish one group, then reread deadlines. A long early-evening queue must
+  // not hide a final pass that becomes due while other games are simulated.
+  const due = allDue.slice(0, concurrency);
   const results = await pool(due, concurrency, item => runGame(client, item, log));
   const failures = [];
   for (let i = 0; i < results.length; i++) {
@@ -157,11 +160,12 @@ export async function runCycle({
   catch (error) { log(`health warning=${String(error)}`); }
 
   log(`finished=${new Date().toISOString()} archived=${results.length - failures.length} failed=${failures.length} outstanding=${outstanding.length} health=${health?.status ?? 'unavailable'}`);
-  if (failures.length || outstanding.length) {
+  const selected = new Set(due.map(gameId));
+  if (failures.length || outstanding.some(id => selected.has(id))) {
     const summary = JSON.stringify({ failures, outstanding });
     throw new Error(`Unfinished due forecasts: ${summary}`);
   }
-  return { archived: results.length, failed: 0, outstanding: 0, day: after.day };
+  return { archived: results.length, failed: 0, outstanding: outstanding.length, day: after.day };
 }
 
 // Keep an active clock between GitHub launches. Cron is a recovery trigger,
@@ -180,8 +184,10 @@ export async function runService({
   let lastRefresh = -Infinity, cycles = 0, failures = 0;
   while (now() < end) {
     const refreshResults = now() - lastRefresh >= 60 * 60_000;
+    let pending = false;
     try {
-      await cycle({ refreshResults });
+      const result = await cycle({ refreshResults });
+      pending = Number(result?.outstanding) > 0;
       if (refreshResults) lastRefresh = now();
     } catch (error) {
       failures++;
@@ -189,7 +195,7 @@ export async function runService({
     }
     cycles++;
     const remaining = end - now();
-    if (remaining > 0) await wait(Math.min(intervalMs, remaining));
+    if (remaining > 0) await wait(Math.min(pending ? 1000 : intervalMs, remaining));
   }
   log(`handoff ready cycles=${cycles} failedCycles=${failures}`);
   return { cycles, failures };

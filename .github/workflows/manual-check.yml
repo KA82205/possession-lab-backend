@@ -23,7 +23,8 @@ permissions:
 
 concurrency:
   group: possession-lab-${{ inputs.mode == 'dry-run' && 'read-only' || 'scheduler' }}
-  cancel-in-progress: false
+  # Source fixes replace the current worker; scheduled/handed-off runs queue.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   update:

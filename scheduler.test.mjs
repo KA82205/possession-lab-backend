@@ -104,3 +104,30 @@ test('worker counts simulation runtime toward its bounded handoff deadline', asy
   assert.equal(result.cycles, 2);
   await assert.rejects(runService({durationMs: 360 * 60_000}), /duration/);
 });
+
+test('a large regular queue yields after one group so new final deadlines can take priority', async () => {
+  let reads=0;
+  const ids=['401800011','401800012','401800013','401800014'];
+  const archived=[];
+  const fetchImpl=async(_url,init)=>{
+    const {action,game_id}=JSON.parse(init.body);
+    if(action==='refresh_results')return json({newGames:[]});
+    if(action==='due_games')return json({day:'2026-10-30',due:(reads++ ? ids.slice(2) : ids).map(id=>({game_id:id,minutesToTip:120}))});
+    if(action==='archive_forecast_batch')return json({gameId:game_id,saved:true});
+    if(action==='finalize_forecast_batches'){archived.push(game_id);return json({gameId:game_id,capturedAt:'2026-10-30T20:00:00Z'});}
+    if(action==='health')return json({status:'healthy'});
+  };
+  const result=await runCycle({siteOrigin:'https://example.com',token:'placeholder',fetchImpl,log(){}});
+  assert.deepEqual(archived.sort(),ids.slice(0,2));
+  assert.equal(result.outstanding,2);
+});
+
+test('backlogged work rechecks immediately instead of waiting another minute', async () => {
+  const {runService}=await import('./scheduler.mjs');
+  let clock=0,calls=0;
+  const waits=[];
+  await runService({durationMs:120_000,now:()=>clock,log(){},
+    wait:async ms=>{waits.push(ms);clock+=ms;},
+    cycle:async()=>({outstanding:++calls<3?2:0})});
+  assert.deepEqual(waits.slice(0,3),[1000,1000,60000]);
+});
